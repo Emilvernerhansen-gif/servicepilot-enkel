@@ -10,7 +10,7 @@
 <label>Tag et foto eller vælg fra galleri<input id="paperPhoto" type="file" accept="image/*"></label>
 <img id="paperPreview" hidden alt="Fejlseddel til sammenligning" style="max-width:100%">
 <p id="scanStatus" role="status">Fotoet aflæses på enheden. Første scanning kræver internet.</p>
-<form id="scanReview" hidden><p>Kontrollér hver linje mod fotoet. Fjern overskrifter og ret håndskrift.</p><div id="scanRows"></div><div class="actions"><button type="button" id="addScanRow">Tilføj linje</button><button>Gem valgte fejl</button></div></form></details>
+<form id="scanReview" hidden><p>Kontrollér hver linje mod fotoet, også flueben og initialer. Gem kun åbne fejl. Fjern overskrifter og ret håndskrift.</p><div id="scanRows"></div><div class="actions"><button type="button" id="addScanRow">Tilføj linje</button><button>Gem valgte fejl</button></div></form></details>
 <details id="newFault"><summary>＋ Registrer fejl</summary><form id="quickFault">
 <label>Værelse eller område<input name="place" list="knownPlaces" required autocomplete="off" placeholder="Søg eller skriv lokation"></label><datalist id="knownPlaces"></datalist>
 <label>Kort fejlbeskrivelse<input name="description" required placeholder="F.eks. håndtaget sidder løst"></label>
@@ -138,10 +138,11 @@ async function actOnFault(button){
 
 let paperKey='', scanSequence=0, paperUrl='';
 function suggestLine(line,places){
-  const matches=places.filter(place=>line===place || (line.startsWith(place) && /^[\s:|–-]/.test(line.slice(place.length))));
-  if(matches.length!==1)return {place:'',description:line};
-  const place=matches[0];
-  return {place,description:line.slice(place.length).replace(/^[\s:|–-]+/,'')};
+  // Papirarket har dato før #lokation. Indhold efter lokationen kan gå på tværs af kolonner.
+  const body=line.replace(/^\s*\d{1,2}\s*[/.-]\s*\d{1,2}(?:\s*[/.-]\s*\d{4})?(?=\s|#)\s*/, '').replace(/^\s*#\s*/, '').trim();
+  const matches=places.filter(place=>body===place || (body.startsWith(place) && /^[\s:|–-]/.test(body.slice(place.length))));
+  if(matches.length!==1)return {place:'',description:body};
+  return {place:matches[0],description:body.slice(matches[0].length).replace(/^[\s:|–-]+/,'')};
 }
 function addScanRow(line=''){
   const places=[...new Set(currentRooms.map(r=>r.room).filter(Boolean))];
@@ -175,7 +176,7 @@ $('paperPhoto').onchange=async event=>{
     worker=await (engine.default || engine).createWorker('dan',1,{logger:m=>{
       if(m.status==='recognizing text')status.textContent='Aflæser foto · '+Math.round(m.progress*100)+' %';
     }});
-    const {data}=await worker.recognize(file);
+    const {data}=await worker.recognize(file,{rotateAuto:true});
     const lines=data.text.split(/\r?\n/).map(line=>line.trim()).filter(Boolean);
     lines.forEach(line=>addScanRow(line));
     if(!lines.length)addScanRow();
