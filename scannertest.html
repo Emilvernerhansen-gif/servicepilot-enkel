@@ -1,0 +1,49 @@
+<!doctype html><html lang="da"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>ServicePilot · Scannertest</title><style>:root{color-scheme:light dark}body{max-width:42rem;margin:auto;padding:1rem;font:1rem/1.5 system-ui}button,input,select{font:inherit;padding:.6rem;max-width:100%}label{display:block;margin:1rem 0}canvas{width:100%;height:auto}pre{white-space:pre-wrap;overflow-wrap:anywhere}</style><main><h1>Test af fejlseddel</h1><p id="status" role="status">Kontrollerer telefonens grafik…</p>
+<label>Vælg originalfoto <input type="file" accept="image/*" id="photo"></label>
+<label>Drej foto <select id="rotation"><option value="0">Som på fotoet</option><option value="90">90° mod højre</option><option value="-90">90° mod venstre</option><option value="180">180°</option></select></label>
+<canvas id="preview" hidden></canvas>
+<p>Første scanning henter ca. 2,1 GB. Brug Wi-Fi. Testen viser aflæsningen lokalt og gemmer ingen opgaver.</p>
+<button id="run" disabled>Hent model og aflæs tabel</button><pre id="output"></pre></main><script type="module">
+const byId=id=>document.getElementById(id);
+const status=byId('status'), photo=byId('photo'), rotation=byId('rotation'), canvas=byId('preview'), run=byId('run'), output=byId('output');
+let compatible=false, bitmap=null, engine=null;
+async function check(){
+ try{
+ const adapter=await navigator.gpu?.requestAdapter();
+ if(!adapter?.features.has('shader-f16'))throw Error('WebGPU med shader-f16 er ikke tilgængelig.');
+ compatible=true;status.textContent='Grafikkrav opfyldt. Vælg foto og kontrollér læseretningen.';
+ }catch(e){status.textContent=e.message+' Ingen model hentet.'}
+ run.disabled=!(compatible && bitmap);
+}
+function draw(){
+ if(!bitmap)return;
+ const angle=Number(rotation.value), sideways=Math.abs(angle)===90;
+ canvas.width=sideways?bitmap.height:bitmap.width;canvas.height=sideways?bitmap.width:bitmap.height;
+ const ctx=canvas.getContext('2d');ctx.translate(canvas.width/2,canvas.height/2);ctx.rotate(angle*Math.PI/180);
+ ctx.drawImage(bitmap,-bitmap.width/2,-bitmap.height/2);canvas.hidden=false;output.textContent='';
+}
+rotation.onchange=draw;
+photo.onchange=async()=>{
+ photo.disabled=true;run.disabled=true;bitmap?.close();bitmap=null;canvas.hidden=true;output.textContent='';
+ try{if(photo.files[0]){bitmap=await createImageBitmap(photo.files[0]);draw()}}
+ catch(e){status.textContent='Fotoet kunne ikke åbnes: '+e.message}
+ finally{photo.disabled=false;run.disabled=!(compatible && bitmap)}
+};
+run.onclick=async()=>{
+ run.disabled=photo.disabled=rotation.disabled=true;output.textContent='';
+ try{
+ status.textContent='Starter tabelaflæsning…';
+ const {createPaddleOcrVlEngine}=await import('https://cdn.jsdelivr.net/gh/glebkudr/paddleocr-vl-webgpu@f7d2f8aa40639497e1dbd95f2f8793e664b90758/web/engine/browser_ocr_runtime.mjs');
+ engine??=await createPaddleOcrVlEngine();
+ const start=performance.now();
+ const result=await engine.recognizeCanvas(canvas,{task:'table',maxGeneratedTokens:3072,onProgress(u){
+ status.textContent=u.modelLoadedBytes?'Modeldata: '+Math.round(u.modelLoadedBytes/1e6)+' MB':'Arbejder · '+(u.phase||u.stage||'aflæser');
+ }});
+ output.textContent=result.text||'Ingen tabel genkendt.';
+ status.textContent='Færdig på '+Math.round((performance.now()-start)/1000)+' sekunder. Sammenlign resultatet med fotoet.';
+ run.textContent='Aflæs næste tabel';
+ }catch(e){status.textContent='Testen kunne ikke gennemføres: '+e.message;await engine?.dispose();engine=null}
+ finally{run.disabled=photo.disabled=rotation.disabled=false}
+};
+check();
+</script></html>
