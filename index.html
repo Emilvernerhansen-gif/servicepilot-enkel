@@ -6,6 +6,11 @@
 <section id="manuals"><div class="card"><h2>Tilføj manual</h2><form id="manualForm"><label>Navn<input name="name" required placeholder="F.eks. Wexiödisk WE 153"></label><label>Producent / model<input name="model" placeholder="Valgfrit"></label><label>Placering / kategori<input name="place" placeholder="F.eks. Køkken"></label><label>PDF eller billede<input name="file" type="file" accept=".pdf,image/*"></label><label>Eksternt link (valgfrit)<input name="url" type="url" placeholder="https://..."></label><button>Gem manual</button></form><p class="hint">Filer gemmes på denne enhed. Store filer kan fylde meget.</p></div><div class="card"><h2>Manualarkiv <span id="manualCount" class="counts"></span></h2><input id="manualSearch" placeholder="Søg navn, model, placering"><div id="manualList"></div></div></section>
 <section id="stock" class="hidden"><div class="card"><h2>Opret vare</h2><form id="stockForm"><label>Varenavn<input name="name" required placeholder="F.eks. 4,5 × 40 mm skruer"></label><div class="row"><label>Varenummer<input name="sku" placeholder="Valgfrit"></label><label>Leverandør<input name="supplier" placeholder="Valgfrit"></label></div><div class="row"><label>Antal på lager<input name="qty" type="number" step="any" min="0" value="0" required></label><label>Minimumsantal<input name="min" type="number" step="any" min="0" value="0" required></label></div><label>Placering<input name="place" placeholder="F.eks. værksted / hylde 2"></label><label>Genbestillingslink<input name="url" type="url" placeholder="https://..."></label><button>Gem vare</button></form></div><div class="card"><h2>Varelager <span id="stockCount" class="counts"></span></h2><input id="stockSearch" placeholder="Søg vare, varenummer, leverandør"><div id="stockList"></div></div></section>
 <section id="rooms" class="hidden"><div class="card"><h2>Fejlmappe</h2>
+<details id="scanPage"><summary>📷 Scan fejlseddel</summary>
+<label>Tag et foto eller vælg fra galleri<input id="paperPhoto" type="file" accept="image/*"></label>
+<img id="paperPreview" hidden alt="Fejlseddel til sammenligning" style="max-width:100%">
+<p id="scanStatus" role="status">Fotoet aflæses på enheden. Første scanning kræver internet.</p>
+<form id="scanReview" hidden><p>Kontrollér hver linje mod fotoet. Fjern overskrifter og ret håndskrift.</p><div id="scanRows"></div><div class="actions"><button type="button" id="addScanRow">Tilføj linje</button><button>Gem valgte fejl</button></div></form></details>
 <details id="newFault"><summary>＋ Registrer fejl</summary><form id="quickFault">
 <label>Værelse eller område<input name="place" list="knownPlaces" required autocomplete="off" placeholder="Søg eller skriv lokation"></label><datalist id="knownPlaces"></datalist>
 <label>Kort fejlbeskrivelse<input name="description" required placeholder="F.eks. håndtaget sidder løst"></label>
@@ -129,6 +134,87 @@ async function actOnFault(button){
     dialog.showModal();
   }catch(error){notify('Kunne ikke ændre fejlen: '+error.message)}
 }
+
+
+let paperKey='', scanSequence=0, paperUrl='';
+function suggestLine(line,places){
+  const matches=places.filter(place=>line===place || (line.startsWith(place) && /^[\s:|–-]/.test(line.slice(place.length))));
+  if(matches.length!==1)return {place:'',description:line};
+  const place=matches[0];
+  return {place,description:line.slice(place.length).replace(/^[\s:|–-]+/,'')};
+}
+function addScanRow(line=''){
+  const places=[...new Set(currentRooms.map(r=>r.room).filter(Boolean))];
+  const suggestion=suggestLine(line.trim(),places);
+  const row=document.createElement('fieldset');
+  row.dataset.key=paperKey+'-'+scanSequence++;
+  row.innerHTML='<label>Værelse eller område<input list="knownPlaces" required></label><label>Fejlbeskrivelse<textarea required></textarea></label><button type="button" class="secondary">Fjern linje</button>';
+  row.querySelector('input').value=suggestion.place;
+  row.querySelector('textarea').value=suggestion.description;
+  row.querySelector('button').onclick=()=>row.remove();
+  $('scanRows').append(row);
+}
+$('addScanRow').onclick=()=>addScanRow();
+$('paperPhoto').onchange=async event=>{
+  const input=event.target,file=input.files[0];
+  if(!file)return;
+  input.disabled=true;
+  const status=$('scanStatus');
+  let worker;
+  $('scanReview').hidden=true;
+  $('scanRows').replaceChildren();
+  scanSequence=0;paperKey='';
+  if(paperUrl)URL.revokeObjectURL(paperUrl);
+  paperUrl=URL.createObjectURL(file);
+  $('paperPreview').src=paperUrl;$('paperPreview').hidden=false;
+  try{
+    const hash=await crypto.subtle.digest('SHA-256',await file.arrayBuffer());
+    paperKey='scan-'+Array.from(new Uint8Array(hash),n=>n.toString(16).padStart(2,'0')).join('');
+    status.textContent='Henter dansk tekstgenkendelse…';
+    const engine=await import('https://cdn.jsdelivr.net/npm/tesseract.js@6.0.1/dist/tesseract.esm.min.js');
+    worker=await (engine.default || engine).createWorker('dan',1,{logger:m=>{
+      if(m.status==='recognizing text')status.textContent='Aflæser foto · '+Math.round(m.progress*100)+' %';
+    }});
+    const {data}=await worker.recognize(file);
+    const lines=data.text.split(/\r?\n/).map(line=>line.trim()).filter(Boolean);
+    lines.forEach(line=>addScanRow(line));
+    if(!lines.length)addScanRow();
+    status.textContent=lines.length?'Kontrollér forslagene før du gemmer.':'Ingen tekst genkendt. Du kan skrive fra fotoet.';
+    $('scanReview').hidden=false;
+  }catch(error){
+    status.textContent='Aflæsning mislykkedes. Prøv et skarpere foto og kontrollér internetforbindelsen.';
+    if(paperKey){addScanRow();$('scanReview').hidden=false}
+  }finally{input.disabled=false;input.value='';if(worker)await worker.terminate()}
+};
+$('scanReview').onsubmit=async event=>{
+  event.preventDefault();
+  const form=event.target,save=form.querySelector('button:not([type])');
+  if(save.disabled)return;
+  const rows=Array.from($('scanRows').children,row=>({
+    id:row.dataset.key,room:row.querySelector('input').value.trim(),
+    description:row.querySelector('textarea').value.trim()
+  }));
+  if(!rows.length || rows.some(row=>!row.room || !row.description))return notify('Udfyld lokation og beskrivelse for hver linje');
+  const unknown=[...new Set(rows.map(row=>row.room).filter(place=>!currentRooms.some(r=>r.room===place)))];
+  if(unknown.length && !confirm('Opret på nye lokationer: '+unknown.join(', ')+'?'))return;
+  save.disabled=true;$('paperPhoto').disabled=true;
+  let added=0;
+  try{
+    await tx('rooms','readwrite',store=>{
+      for(const row of rows){
+        const request=store.getKey(row.id);
+        request.onsuccess=()=>{
+          if(request.result!==undefined)return;
+          store.add({id:row.id,room:row.room,created:now(),note:'',checks:[{name:row.description,ok:false,note:'',photo:null}]});added++;
+        };
+      }
+    });
+    form.hidden=true;$('paperPreview').hidden=true;URL.revokeObjectURL(paperUrl);paperUrl='';
+    $('scanStatus').textContent=added+' fejl oprettet · '+(rows.length-added)+' tidligere gemte linjer.';
+    $('placeFilter').value='';$('faultTabs').firstElementChild.click();await renderRooms();
+  }catch(error){notify('Fejlene kunne ikke gemmes. Prøv igen.')}
+  finally{save.disabled=false;$('paperPhoto').disabled=false}
+};
 
 async function refresh(){await Promise.all([renderManuals(),renderStock(),renderRooms()])}
 document.querySelectorAll('nav button').forEach(b=>b.onclick=()=>{document.querySelectorAll('nav button').forEach(x=>x.classList.toggle('active',x===b));for(const id of STORES)$(id).classList.toggle('hidden',id!==b.dataset.tab)});
