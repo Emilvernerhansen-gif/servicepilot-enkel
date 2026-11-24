@@ -7,7 +7,7 @@
 <section id="stock" class="hidden"><div class="card"><h2>Opret vare</h2><form id="stockForm"><label>Varenavn<input name="name" required placeholder="F.eks. 4,5 × 40 mm skruer"></label><div class="row"><label>Varenummer<input name="sku" placeholder="Valgfrit"></label><label>Leverandør<input name="supplier" placeholder="Valgfrit"></label></div><div class="row"><label>Antal på lager<input name="qty" type="number" step="any" min="0" value="0" required></label><label>Minimumsantal<input name="min" type="number" step="any" min="0" value="0" required></label></div><label>Placering<input name="place" placeholder="F.eks. værksted / hylde 2"></label><label>Genbestillingslink<input name="url" type="url" placeholder="https://..."></label><button>Gem vare</button></form></div><div class="card"><h2>Varelager <span id="stockCount" class="counts"></span></h2><input id="stockSearch" placeholder="Søg vare, varenummer, leverandør"><div id="stockList"></div></div></section>
 <section id="rooms" class="hidden"><div class="card"><h2>Fejlmappe</h2>
 <details id="scanPage"><summary>📷 Scan fejlseddel</summary>
-<label>Tag et foto eller vælg fra galleri<input id="paperPhoto" type="file" accept="image/*"></label>
+<p><a id="nativeLaunch" href="intent://scan#Intent;scheme=servicepilotscan;package=dk.servicepilot.scanner;end">Åbn Android-scanner</a></p><label>Tag et foto eller vælg fra galleri<input id="paperPhoto" type="file" accept="image/*"></label>
 <img id="paperPreview" hidden alt="Fejlseddel til sammenligning" style="max-width:100%">
 <p id="scanStatus" role="status">Fotoet aflæses på enheden. Første scanning kræver internet.</p>
 <form id="scanReview" hidden><p>Kontrollér hver linje mod fotoet, også flueben og initialer. Gem kun åbne fejl. Fjern overskrifter og ret håndskrift.</p><div id="scanRows"></div><div class="actions"><button type="button" id="addScanRow">Tilføj linje</button><button>Gem valgte fejl</button></div></form></details>
@@ -217,6 +217,29 @@ $('scanReview').onsubmit=async event=>{
   finally{save.disabled=false;$('paperPhoto').disabled=false}
 };
 
+if(location.hostname==='raw.githack.com')$('nativeLaunch').href='intent://scan?preview=1#Intent;scheme=servicepilotscan;package=dk.servicepilot.scanner;end';
+if(location.hash.startsWith('#native=')){
+ try{
+  const data=JSON.parse(decodeURIComponent(location.hash.slice(8)));
+  history.replaceState(null,'',location.pathname+location.search);
+  if(!/^[a-f0-9]{64}$/.test(data.key)||!Array.isArray(data.rows)||data.rows.length>100)throw Error();
+  paperKey='scan-'+data.key;scanSequence=0;
+  let closed=0,unclear=0;
+  for(const record of data.rows){
+    if(record.status==='closed'){closed++;continue}
+    if(typeof record.fault!=='string'||!record.fault.trim())continue;
+    const places=Array.isArray(record.places)?record.places.filter(p=>typeof p==='string'&&p.trim()):[];
+    for(const place of new Set(places.length?places:[''])){
+      addScanRow();const row=$('scanRows').lastElementChild;
+      row.querySelector('textarea').value=record.fault;
+      row.querySelector('input').value=record.status==='open'?place:'';
+      if(record.status!=='open'){unclear++;row.prepend(document.createTextNode('Kontrollér kvittering og lokation: '+place))}
+    }
+  }
+  document.querySelector('[data-tab="rooms"]').click();$('scanPage').open=true;$('scanReview').hidden=false;
+  $('scanStatus').textContent=closed+' kvitterede rækker sprunget over · '+unclear+' usikre forslag. Kontrollér før lagring.';
+ }catch{$('scanStatus').textContent='Android-resultatet kunne ikke læses.'}
+}
 async function refresh(){await Promise.all([renderManuals(),renderStock(),renderRooms()])}
 document.querySelectorAll('nav button').forEach(b=>b.onclick=()=>{document.querySelectorAll('nav button').forEach(x=>x.classList.toggle('active',x===b));for(const id of STORES)$(id).classList.toggle('hidden',id!==b.dataset.tab)});
 $('manualForm').onsubmit=async e=>{e.preventDefault();try{const f=fields(e.target),file=f.file instanceof File&&f.file.size?f.file:null;await put('manuals',{id:uid(),name:f.name.trim(),model:f.model.trim(),place:f.place.trim(),url:safeLink(f.url),file,created:now()});e.target.reset();await renderManuals();notify('Manual gemt')}catch(err){notify('Kunne ikke gemme filen. Kontrollér ledig lagerplads.')}};
