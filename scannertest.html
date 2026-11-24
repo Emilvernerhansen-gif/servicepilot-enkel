@@ -9,8 +9,11 @@ const status=byId('status'), photo=byId('photo'), rotation=byId('rotation'), can
 let compatible=false, bitmap=null, engine=null;
 async function check(){
  try{
- const adapter=await navigator.gpu?.requestAdapter();
- if(!adapter?.features.has('shader-f16'))throw Error('WebGPU med shader-f16 er ikke tilgængelig.');
+ if(!window.isSecureContext)throw Error('Testsiden skal åbnes via HTTPS.');
+ if(!navigator.gpu)throw Error('Denne browser stiller ikke WebGPU til rådighed.');
+ const adapter=await navigator.gpu.requestAdapter();
+ if(!adapter)throw Error('WebGPU findes, men browseren kunne ikke åbne en grafikadapter.');
+ if(!adapter.features.has('shader-f16'))throw Error('Grafikadapteren er tilgængelig, men tilbyder ikke shader-f16. Denne scannermodel kan ikke køre her.');
  compatible=true;status.textContent='Grafikkrav opfyldt. Vælg foto og kontrollér læseretningen.';
  }catch(e){status.textContent=e.message+' Ingen model hentet.'}
  run.disabled=!(compatible && bitmap);
